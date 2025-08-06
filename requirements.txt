@@ -4,3 +4,5 @@ pyasn1==0.6.1
 python-dotenv==1.1.1
 rsa==4.9.1
 Telethon==1.40.0
+colorama==0.4.6
+psutil==6.1.1

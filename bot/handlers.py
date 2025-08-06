@@ -1,5 +1,6 @@
 import os
 import sys
+import psutil
 from telethon import events, Button
 from datetime import datetime
 from .client import client
@@ -8,7 +9,6 @@ from utils.logger import logger, LOG_FILE
 from .scheduler.storage import load_state, save_state
 
 START_TIME = datetime.now()
-LISTEN_CHATS = [TARGET_CHAT_ID, 'me']
 SELF_USER = 'me'
 
 AVAILABLE_JOBS = [
@@ -25,17 +25,27 @@ def command(name):
         return func
     return wrapper
 
-@client.on(events.NewMessage(chats=LISTEN_CHATS, from_users=SELF_USER))
+@client.on(events.NewMessage(from_users=SELF_USER))
 async def handle_message(event):
-    msg = event.raw_text.strip()
-    chat = await event.get_chat()
-    chat_name = getattr(chat, 'title', 'Saved Messages')
+    msg = (event.raw_text or "").strip()
+    if not msg:
+        return                   
 
+    # Only process commands starting with "."
+    # if not msg.startswith("."):
+    #     return
+
+    chat = await event.get_chat()
+    chat_name = getattr(chat, "title", "Saved Messages")
     logger.info(f"[{chat_name}] Your message: {msg}")
 
-    cmd = msg.split()[0].lower()
-    if cmd in COMMAND_HANDLERS:
-        await COMMAND_HANDLERS[cmd](event)
+    parts = msg.split()
+    cmd = parts[0].lower()
+    args = parts[1:] 
+
+    handler = COMMAND_HANDLERS.get(cmd)
+    if handler:
+        await handler(event, *args)
 
 # === 📌 Commands ===
 
@@ -44,16 +54,18 @@ async def handle_help(event):
     help_text = """
 📚 <b>Available Commands</b>:
 <code>.help</code> — show this list of available commands
-<code>.ping</code> — check if the bot is alive, replies with "pong 🏓"
-<code>.log</code> — show the latest status updates from all active tasks
-<code>.exportlog</code> — send the full userbot log file as a document
-<code>.clearlog</code> — clear the userbot log file  
-<code>.time</code> — show current server time  
-<code>.uptime</code> — show how long the bot has been running
-<code>.shutdown</code> — fully stop the userbot process
-<code>.reload</code> — reload the userbot code without restarting
 <code>.nextwork</code> — switch to the next job (in a cycle)
 <code>.getwork</code> — display the currently selected job
+<code>.ping</code> — check if the bot is alive, replies with "pong 🏓"
+<code>.logs</code> — show the latest status updates from all active tasks
+<code>.exportlogs</code> — send the full userbot log file as a document
+<code>.clearlogs</code> — clear the userbot log file  
+<code>.time</code> — show current server time  
+<code>.uptime</code> — show how long the bot has been running
+<code>.stop</code> — fully stop the userbot process
+<code>.reload</code> — reload the userbot code without restarting
+<code>.cpu</code> — show current CPU usage
+<code>.mem</code> — show current memory usage
 """
     logger.info("ℹ️ Received .help — sending list of commands")
     await event.reply(help_text, parse_mode="html")
@@ -63,7 +75,7 @@ async def handle_ping(event):
     logger.info("🔁 Received .ping — replying pong 🏓")
     await event.reply("pong 🏓")
 
-@command(".log")
+@command(".logs")
 async def handle_log(event):
     if not os.path.exists(LOG_FILE):
         await event.reply("❌ Log file not found.")
@@ -88,44 +100,7 @@ async def handle_log(event):
         log_output = "\n".join(last_entries[task] for task in sorted(last_entries))
         await event.reply(f"📝 Latest task statuses:\n\n<code>{log_output}</code>", parse_mode='html')
 
-@command(".uptime")
-async def handle_uptime(event):
-    uptime = datetime.now() - START_TIME
-    hours, remainder = divmod(int(uptime.total_seconds()), 3600)
-    minutes, _ = divmod(remainder, 60)
-
-    logger.info("ℹ️ Received .uptime — replying with bot uptime")
-    await event.reply(f"⏳ Uptime: {hours}h {minutes}m")
-    
-@command(".nextwork")
-async def handle_nextjob(event):
-    state = load_state()
-    task_state = state.get("work_cycle", {})
-    current_job = task_state.get("current_job", AVAILABLE_JOBS[0])
-
-    try:
-        idx = AVAILABLE_JOBS.index(current_job)
-    except ValueError:
-        idx = 0
-
-    next_job = AVAILABLE_JOBS[(idx + 1) % len(AVAILABLE_JOBS)]
-    task_state["current_job"] = next_job
-    state["work_cycle"] = task_state
-    save_state(state)
-
-    logger.info(f"[work_cycle] 🔄 Job switched to: {next_job}")
-    await event.reply(f"✅ Switched to job:\n<code>{next_job}</code>", parse_mode="html")
-
-@command(".getwork")
-async def handle_getjob(event):
-
-    state = load_state()
-    job = state.get("work_cycle", {}).get("current_job", "@toadbot Поход в столовую")
-
-    logger.info(f"[work_cycle] 📄 Current job is: {job}")
-    await event.reply(f"👔 Current job:\n<code>{job}</code>", parse_mode="html")
-
-@command(".exportlog")
+@command(".exportlogs")
 async def handle_export_log(event):
     if os.path.exists(LOG_FILE):
         await client.send_file(event.chat_id, LOG_FILE, caption="📦 Full log file:")
@@ -133,7 +108,7 @@ async def handle_export_log(event):
     else:
         await event.reply("❌ Log file not found.")
 
-@command(".clearlog")
+@command(".clearlogs")
 async def handle_clearlog(event):
     try:
         with open(LOG_FILE, "w", encoding="utf-8") as f:
@@ -144,15 +119,52 @@ async def handle_clearlog(event):
         logger.error(f"❌ Failed to clear log: {e}")
         await event.reply("❌ Failed to clear log file.")
 
+@command(".uptime")
+async def handle_uptime(event):
+    uptime = datetime.now() - START_TIME
+    hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+    minutes, _ = divmod(remainder, 60)
+
+    logger.info("ℹ️ Received .uptime — replying with bot uptime")
+    await event.reply(f"⏳ Uptime: {hours}h {minutes}m")
+    
+@command(".nextwork")
+async def handle_nextwork(event):
+    state = load_state()
+    task_state = state.get("work_cycle", {})
+    current_work = task_state.get("current_job", AVAILABLE_JOBS[0])
+
+    try:
+        idx = AVAILABLE_JOBS.index(current_work)
+    except ValueError:
+        idx = 0
+
+    next_work = AVAILABLE_JOBS[(idx + 1) % len(AVAILABLE_JOBS)]
+    task_state["current_job"] = next_work
+    state["work_cycle"] = task_state
+    save_state(state)
+
+    logger.info(f"[work_cycle] 🔄 Work switched to: {next_work}")
+    await event.reply(f"✅ Switched to job:\n<code>{next_work}</code>", parse_mode="html")
+
+@command(".getwork")
+async def handle_getwork(event):
+
+    state = load_state()
+    work = state.get("work_cycle", {}).get("current_job", "@toadbot Поход в столовую")
+
+    logger.info(f"[work_cycle] 📄 Current job is: {work}")
+    await event.reply(f"👔 Current job:\n<code>{work}</code>", parse_mode="html")
+
 @command(".time")
 async def handle_time(event):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"🕒 Received .time — replying with {now}")
     await event.reply(f"🕒 Current time:\n<code>{now}</code>", parse_mode="html")
 
-@command(".shutdown")
-async def handle_shutdown(event):
-    logger.info("🛑 Received .shutdown — force quitting userbot...")
+@command(".stop")
+async def handle_stop(event):
+    logger.info("🛑 Received .stop — force quitting userbot...")
     await event.reply("🔌 Userbot is shutting down now.")
     await client.disconnect()
     os._exit(0)
@@ -166,3 +178,24 @@ async def handle_reload(event):
     await event.reply("♻️ Reloading...")
 
     os.execv(sys.executable, [sys.executable, "-m", "bot.main"])
+
+@command(".cpu")
+async def handle_cpu(event):
+    cpu_pct = psutil.cpu_percent(interval=1)
+    logger.info(f"🖥️ Received .cpu — replying with CPU {cpu_pct}%")
+    await event.reply(
+        f"🖥️ CPU usage:\n<code>{cpu_pct}%</code>",
+        parse_mode="html"
+    )
+
+@command(".mem")
+async def handle_mem(event):
+    vm = psutil.virtual_memory()
+    used_gb = vm.used / (1024 ** 3)
+    total_gb = vm.total / (1024 ** 3)
+    pct = vm.percent
+    logger.info(f"💾 Received .mem — replying with Memory {pct}% ({used_gb:.2f}/{total_gb:.2f} GB)")
+    await event.reply(
+        f"💾 Memory usage:\n<code>{used_gb:.2f} GB / {total_gb:.2f} GB ({pct}%)</code>",
+        parse_mode="html"
+    )
