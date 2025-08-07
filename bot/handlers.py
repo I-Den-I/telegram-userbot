@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import psutil
 from telethon import events, Button
 from datetime import datetime
@@ -60,6 +61,7 @@ async def handle_help(event):
 <code>.logs</code> — show the latest status updates from all active tasks
 <code>.exportlogs</code> — send the full userbot log file as a document
 <code>.clearlogs</code> — clear the userbot log file  
+<code>.state</code> — send the current state.json contents as a formatted JSON block
 <code>.time</code> — show current server time  
 <code>.uptime</code> — show how long the bot has been running
 <code>.stop</code> — fully stop the userbot process
@@ -119,6 +121,28 @@ async def handle_clearlog(event):
         logger.error(f"❌ Failed to clear log: {e}")
         await event.reply("❌ Failed to clear log file.")
 
+@command(".state")
+async def handle_export_state(event, *args):
+    """
+    Send the current contents of state.json as a formatted JSON text block.
+    """
+    # Path to state.json in the project root
+    path = os.path.join(os.getcwd(), "state.json")
+    
+    if os.path.exists(path):
+        # Load the state dictionary
+        state = load_state()
+        # Pretty-print with 2-space indent
+        pretty = json.dumps(state, indent=2, ensure_ascii=False)
+        # Reply with the JSON in a code block
+        await event.reply(
+            "📊 Current state (state.json):\n```json\n" + pretty + "\n```"
+        )
+        logger.info("[work_cycle_state] 📤 Sent state.json content via .exportstate")
+    else:
+        await event.reply("❌ state.json not found.")
+        logger.warning("[work_cycle_warning] state.json file is missing")
+
 @command(".uptime")
 async def handle_uptime(event):
     uptime = datetime.now() - START_TIME
@@ -144,7 +168,7 @@ async def handle_nextwork(event):
     state["work_cycle"] = task_state
     save_state(state)
 
-    logger.info(f"[work_cycle] 🔄 Work switched to: {next_work}")
+    logger.info(f"[work_cycle_switch] 🔄 Work switched to: {next_work}")
     await event.reply(f"✅ Switched to job:\n<code>{next_work}</code>", parse_mode="html")
 
 @command(".getwork")
@@ -153,7 +177,7 @@ async def handle_getwork(event):
     state = load_state()
     work = state.get("work_cycle", {}).get("current_job", "@toadbot Поход в столовую")
 
-    logger.info(f"[work_cycle] 📄 Current job is: {work}")
+    logger.info(f"[work_cycle_get] 📄 Current job is: {work}")
     await event.reply(f"👔 Current job:\n<code>{work}</code>", parse_mode="html")
 
 @command(".time")
