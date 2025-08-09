@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from .task_runner import run_task
-from .task_runner_work import init_chain_state, run_chain_task
+from .task_runner_work import run_chain_task
 from .storage import load_state
 
 logger = logging.getLogger("userbot")
@@ -13,8 +13,6 @@ BASE_DIR = Path(__file__).parent.parent.parent
 
 async def start_all_tasks():
     logger.info("🛠 Starting all scheduled tasks…")
-
-    init_chain_state()
 
     tasks_config_path = BASE_DIR / "tasks.json"
     try:
